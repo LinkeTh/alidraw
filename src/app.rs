@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use crate::brush::{BrushStyle, Tool};
 use crate::canvas::StrokeData;
 use crate::canvas_raster::{self, CanvasRaster};
+use crate::dialog::{ConfirmDialogConfig, PendingDialog, show_confirm_dialog};
 use crate::export;
 use crate::history::History;
 use crate::import;
@@ -20,25 +21,6 @@ const TOOLBAR_SIDE_PADDING: f32 = 16.0;
 const STATUS_OVERLAY_WIDTH: f32 = 520.0;
 const STATUS_OVERLAY_HEIGHT: f32 = 56.0;
 const STATUS_OVERLAY_TOP_OFFSET: f32 = 52.0;
-
-// -- Confirmation dialog geometry --
-const DIALOG_WIDTH: f32 = 540.0;
-const DIALOG_HEIGHT: f32 = 230.0;
-const DIALOG_HEADING_SIZE: f32 = 32.0;
-const DIALOG_SUBTITLE_SIZE: f32 = 22.0;
-const DIALOG_BUTTON_TEXT_SIZE: f32 = 24.0;
-const DIALOG_CANCEL_BUTTON_WIDTH: f32 = 170.0;
-const DIALOG_CONFIRM_BUTTON_WIDTH: f32 = 190.0;
-const DIALOG_BUTTON_HEIGHT: f32 = 62.0;
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-enum PendingDialog {
-    #[default]
-    None,
-    ConfirmClose,
-    ConfirmNewDrawing,
-    ConfirmOpen(PathBuf),
-}
 
 pub(crate) struct AlidrawApp {
     strokes: Vec<StrokeData>,
@@ -259,9 +241,9 @@ impl AlidrawApp {
                 heading: "Quit AliDraw?",
                 subtitle: "Your drawing will be discarded",
                 cancel_label: "Stay",
-                cancel_fill: Color32::from_rgb(188, 230, 255),
+                cancel_fill: Color32::from_rgb(91, 155, 213),
                 confirm_label: "Quit",
-                confirm_fill: Color32::from_rgb(255, 203, 203),
+                confirm_fill: Color32::from_rgb(224, 96, 96),
             },
         );
 
@@ -289,9 +271,9 @@ impl AlidrawApp {
                 heading: "Start a new drawing?",
                 subtitle: "This clears the current canvas",
                 cancel_label: "Keep",
-                cancel_fill: Color32::from_rgb(186, 230, 255),
+                cancel_fill: Color32::from_rgb(91, 155, 213),
                 confirm_label: "Start New",
-                confirm_fill: Color32::from_rgb(255, 236, 186),
+                confirm_fill: Color32::from_rgb(217, 160, 74),
             },
         );
 
@@ -317,9 +299,9 @@ impl AlidrawApp {
                 heading: "Open a new image?",
                 subtitle: "This replaces the current drawing",
                 cancel_label: "Cancel",
-                cancel_fill: Color32::from_rgb(186, 230, 255),
+                cancel_fill: Color32::from_rgb(91, 155, 213),
                 confirm_label: "Open",
-                confirm_fill: Color32::from_rgb(214, 232, 255),
+                confirm_fill: Color32::from_rgb(106, 176, 106),
             },
         );
 
@@ -331,81 +313,6 @@ impl AlidrawApp {
             self.load_and_set_background(path);
         }
     }
-}
-
-/// Buttons clicked on a confirmation dialog.
-struct ConfirmResponse {
-    cancel_clicked: bool,
-    confirm_clicked: bool,
-}
-
-/// Configuration for a confirmation dialog.
-struct ConfirmDialogConfig<'a> {
-    window_title: &'a str,
-    heading: &'a str,
-    subtitle: &'a str,
-    cancel_label: &'a str,
-    cancel_fill: Color32,
-    confirm_label: &'a str,
-    confirm_fill: Color32,
-}
-
-/// Shared helper for the two confirmation modals.
-fn show_confirm_dialog(ui: &mut egui::Ui, config: &ConfirmDialogConfig<'_>) -> ConfirmResponse {
-    let mut response = ConfirmResponse {
-        cancel_clicked: false,
-        confirm_clicked: false,
-    };
-
-    egui::Window::new(config.window_title)
-        .collapsible(false)
-        .resizable(false)
-        .fixed_size(egui::vec2(DIALOG_WIDTH, DIALOG_HEIGHT))
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ui.ctx(), |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(12.0);
-                ui.label(
-                    egui::RichText::new(config.heading)
-                        .size(DIALOG_HEADING_SIZE)
-                        .color(Color32::from_rgb(60, 60, 90)),
-                );
-                ui.add_space(12.0);
-                ui.label(
-                    egui::RichText::new(config.subtitle)
-                        .size(DIALOG_SUBTITLE_SIZE)
-                        .color(Color32::from_rgb(86, 86, 105)),
-                );
-                ui.add_space(18.0);
-
-                ui.horizontal(|ui| {
-                    let cancel = egui::Button::new(
-                        egui::RichText::new(config.cancel_label).size(DIALOG_BUTTON_TEXT_SIZE),
-                    )
-                    .min_size(egui::vec2(DIALOG_CANCEL_BUTTON_WIDTH, DIALOG_BUTTON_HEIGHT))
-                    .fill(config.cancel_fill);
-                    if ui.add(cancel).clicked() {
-                        response.cancel_clicked = true;
-                    }
-
-                    ui.add_space(20.0);
-
-                    let confirm = egui::Button::new(
-                        egui::RichText::new(config.confirm_label).size(DIALOG_BUTTON_TEXT_SIZE),
-                    )
-                    .min_size(egui::vec2(
-                        DIALOG_CONFIRM_BUTTON_WIDTH,
-                        DIALOG_BUTTON_HEIGHT,
-                    ))
-                    .fill(config.confirm_fill);
-                    if ui.add(confirm).clicked() {
-                        response.confirm_clicked = true;
-                    }
-                });
-            });
-        });
-
-    response
 }
 
 impl eframe::App for AlidrawApp {

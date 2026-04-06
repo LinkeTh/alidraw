@@ -1,7 +1,9 @@
 mod app;
+mod app_icon;
 mod brush;
 mod canvas;
 mod canvas_raster;
+mod dialog;
 mod error;
 mod export;
 mod history;
@@ -11,6 +13,8 @@ mod palette;
 mod toolbar;
 
 fn main() -> eframe::Result {
+    let icon = app_icon::generate_rainbow_icon();
+
     let options = eframe::NativeOptions {
         #[cfg(target_os = "linux")]
         event_loop_builder: Some(Box::new(|builder| {
@@ -20,7 +24,8 @@ fn main() -> eframe::Result {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Alidraw")
             .with_inner_size([1366.0, 900.0])
-            .with_decorations(true),
+            .with_decorations(true)
+            .with_icon(icon),
         ..Default::default()
     };
 
