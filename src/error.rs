@@ -1,17 +1,19 @@
+use std::path::PathBuf;
+
 #[derive(Debug, thiserror::Error)]
-pub enum AppError {
-    #[error("failed to save image to {path}: {source}")]
+pub(crate) enum AppError {
+    #[error("failed to save image to {}: {source}", path.display())]
     ExportImage {
-        path: String,
+        path: PathBuf,
         #[source]
         source: image::ImageError,
     },
 }
 
 impl AppError {
-    pub fn export_image(path: &std::path::Path, source: image::ImageError) -> Self {
+    pub(crate) fn export_image(path: &std::path::Path, source: image::ImageError) -> Self {
         Self::ExportImage {
-            path: path.display().to_string(),
+            path: path.to_path_buf(),
             source,
         }
     }

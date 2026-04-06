@@ -1,10 +1,10 @@
-use eframe::egui::{self, FontData, FontDefinitions, FontFamily, FontId, RichText};
+use eframe::egui::{self, FontData, FontDefinitions, FontFamily};
 use lucide_icons::Icon;
 
 const LUCIDE_FONT_NAME: &str = "lucide";
 
 #[derive(Debug, Clone, Copy)]
-pub enum ToolbarIcon {
+pub(crate) enum ToolbarIcon {
     Brush,
     Eraser,
     Pencil,
@@ -17,7 +17,7 @@ pub enum ToolbarIcon {
     Quit,
 }
 
-pub fn initialize(ctx: &egui::Context) {
+pub(crate) fn initialize(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         LUCIDE_FONT_NAME.to_owned(),
@@ -33,11 +33,9 @@ pub fn initialize(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-pub fn icon_text(icon: ToolbarIcon, size: f32, color: egui::Color32) -> RichText {
-    let glyph = char::from(lucide_icon(icon)).to_string();
-    RichText::new(glyph)
-        .font(FontId::new(size, FontFamily::Name(LUCIDE_FONT_NAME.into())))
-        .color(color)
+/// Return just the glyph character for a toolbar icon, without styling.
+pub(crate) fn icon_glyph(icon: ToolbarIcon) -> char {
+    char::from(lucide_icon(icon))
 }
 
 fn lucide_icon(icon: ToolbarIcon) -> Icon {

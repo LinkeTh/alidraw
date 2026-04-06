@@ -6,7 +6,7 @@ use rfd::FileDialog;
 use crate::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExportFormat {
+pub(crate) enum ExportFormat {
     Png,
     Jpeg,
 }
@@ -34,22 +34,28 @@ impl ExportFormat {
     }
 }
 
-pub fn choose_export_path() -> Option<PathBuf> {
-    FileDialog::new()
+pub(crate) fn choose_export_path() -> Option<(PathBuf, ExportFormat)> {
+    // We try PNG first, then JPEG.  rfd does not expose which filter
+    // the user selected, so we infer format from the resulting path
+    // extension and fall back to PNG when no extension is present.
+    let path = FileDialog::new()
         .set_title("Save drawing")
         .add_filter("PNG", &["png"])
         .add_filter("JPEG", &["jpg", "jpeg"])
-        .set_file_name("drawing")
-        .save_file()
+        .set_file_name("drawing.png")
+        .save_file()?;
+
+    let format = ExportFormat::from_extension(path.extension().and_then(|ext| ext.to_str()));
+    Some((path, format))
 }
 
-pub fn save_rgba_image(
+pub(crate) fn save_rgba_image(
     width: u32,
     height: u32,
     rgba: &[u8],
     path: &Path,
+    format: ExportFormat,
 ) -> Result<PathBuf, AppError> {
-    let format = ExportFormat::from_extension(path.extension().and_then(|ext| ext.to_str()));
     let mut target_path = path.to_path_buf();
 
     if target_path.extension().is_none() {
@@ -75,15 +81,14 @@ pub fn save_rgba_image(
 }
 
 fn rgba_to_rgb_over_white(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
-        .flat_map(|pixel| {
-            let alpha = pixel[3] as u16;
-            let inverse_alpha = 255_u16.saturating_sub(alpha);
-            let blend = |component: u8| {
-                ((component as u16 * alpha + 255 * inverse_alpha + 127) / 255) as u8
-            };
-
-            [blend(pixel[0]), blend(pixel[1]), blend(pixel[2])]
-        })
-        .collect()
+    let pixel_count = rgba.len() / 4;
+    let mut out = Vec::with_capacity(pixel_count * 3);
+    for pixel in rgba.chunks_exact(4) {
+        let alpha = pixel[3] as u16;
+        let inverse_alpha = 255_u16.saturating_sub(alpha);
+        let blend =
+            |component: u8| ((component as u16 * alpha + 255 * inverse_alpha + 127) / 255) as u8;
+        out.extend_from_slice(&[blend(pixel[0]), blend(pixel[1]), blend(pixel[2])]);
+    }
+    out
 }

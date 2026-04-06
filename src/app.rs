@@ -3,26 +3,41 @@ use std::time::{Duration, Instant};
 
 use crate::brush::{BrushStyle, Tool};
 use crate::canvas::StrokeData;
-use crate::canvas_raster::CanvasRaster;
+use crate::canvas_raster::{self, CanvasRaster};
 use crate::export;
 use crate::history::History;
 use crate::palette::{
-    BRUSH_SIZES, BRUSH_STYLES, COLORS, DEFAULT_BRUSH_SIZE_INDEX, DEFAULT_BRUSH_STYLE_INDEX,
-    DEFAULT_COLOR_INDEX,
+    self, DEFAULT_BRUSH_SIZE_INDEX, DEFAULT_BRUSH_STYLE_INDEX, DEFAULT_COLOR_INDEX,
 };
 use crate::toolbar;
 
 const STATUS_MESSAGE_DURATION: Duration = Duration::from_secs(2);
 const TOOLBAR_SIDE_PADDING: f32 = 16.0;
 
-fn style_from_index(index: usize) -> BrushStyle {
-    BRUSH_STYLES
-        .get(index)
-        .copied()
-        .unwrap_or(BRUSH_STYLES[DEFAULT_BRUSH_STYLE_INDEX])
+// -- Status overlay geometry --
+const STATUS_OVERLAY_WIDTH: f32 = 520.0;
+const STATUS_OVERLAY_HEIGHT: f32 = 56.0;
+const STATUS_OVERLAY_TOP_OFFSET: f32 = 52.0;
+
+// -- Confirmation dialog geometry --
+const DIALOG_WIDTH: f32 = 540.0;
+const DIALOG_HEIGHT: f32 = 230.0;
+const DIALOG_HEADING_SIZE: f32 = 32.0;
+const DIALOG_SUBTITLE_SIZE: f32 = 22.0;
+const DIALOG_BUTTON_TEXT_SIZE: f32 = 24.0;
+const DIALOG_CANCEL_BUTTON_WIDTH: f32 = 170.0;
+const DIALOG_CONFIRM_BUTTON_WIDTH: f32 = 190.0;
+const DIALOG_BUTTON_HEIGHT: f32 = 62.0;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum PendingDialog {
+    #[default]
+    None,
+    ConfirmClose,
+    ConfirmNewDrawing,
 }
 
-pub struct AlidrawApp {
+pub(crate) struct AlidrawApp {
     strokes: Vec<StrokeData>,
     current_stroke: Option<StrokeData>,
     active_tool: Tool,
@@ -34,8 +49,7 @@ pub struct AlidrawApp {
     status_message: Option<String>,
     status_until: Option<Instant>,
     allow_native_close: bool,
-    pending_close_confirmation: bool,
-    pending_new_drawing_confirmation: bool,
+    pending_dialog: PendingDialog,
 }
 
 impl Default for AlidrawApp {
@@ -44,7 +58,7 @@ impl Default for AlidrawApp {
             strokes: Vec::new(),
             current_stroke: None,
             active_tool: Tool::Brush,
-            active_style: style_from_index(DEFAULT_BRUSH_STYLE_INDEX),
+            active_style: palette::active_style(DEFAULT_BRUSH_STYLE_INDEX),
             active_color_index: DEFAULT_COLOR_INDEX,
             brush_size_index: DEFAULT_BRUSH_SIZE_INDEX,
             history: History::default(),
@@ -52,36 +66,17 @@ impl Default for AlidrawApp {
             status_message: None,
             status_until: None,
             allow_native_close: false,
-            pending_close_confirmation: false,
-            pending_new_drawing_confirmation: false,
+            pending_dialog: PendingDialog::None,
         }
     }
 }
 
 impl AlidrawApp {
-    fn active_color(&self) -> Color32 {
-        if self.active_tool.is_eraser() {
-            Color32::WHITE
-        } else {
-            COLORS
-                .get(self.active_color_index)
-                .copied()
-                .unwrap_or(COLORS[DEFAULT_COLOR_INDEX])
-        }
-    }
-
-    fn active_width(&self) -> f32 {
-        BRUSH_SIZES
-            .get(self.brush_size_index)
-            .copied()
-            .unwrap_or(BRUSH_SIZES[DEFAULT_BRUSH_SIZE_INDEX])
-    }
-
     fn begin_stroke_if_needed(&mut self) {
         if self.current_stroke.is_none() {
             self.current_stroke = Some(StrokeData::new(
-                self.active_color(),
-                self.active_width(),
+                palette::active_color(self.active_tool, self.active_color_index),
+                palette::active_width(self.brush_size_index),
                 self.active_tool,
                 self.active_style,
             ));
@@ -122,12 +117,12 @@ impl AlidrawApp {
     fn save_as(&mut self, canvas_rect: egui::Rect) {
         self.finish_current_stroke();
 
-        let Some(path) = export::choose_export_path() else {
+        let Some((path, format)) = export::choose_export_path() else {
             return;
         };
 
-        let width = canvas_rect.width().round().max(1.0) as u32;
-        let height = canvas_rect.height().round().max(1.0) as u32;
+        let width = canvas_raster::safe_dimension(canvas_rect.width());
+        let height = canvas_raster::safe_dimension(canvas_rect.height());
 
         let Some(rgba) = CanvasRaster::rasterize_rgba(
             width,
@@ -140,7 +135,7 @@ impl AlidrawApp {
             return;
         };
 
-        match export::save_rgba_image(width, height, &rgba, &path) {
+        match export::save_rgba_image(width, height, &rgba, &path, format) {
             Ok(saved_path) => {
                 let label = saved_path
                     .file_name()
@@ -172,8 +167,11 @@ impl AlidrawApp {
     fn paint_status_overlay(&self, ui: &mut egui::Ui, canvas_rect: egui::Rect) {
         if let Some(message) = self.status_message.as_deref() {
             let rect = egui::Rect::from_center_size(
-                egui::pos2(canvas_rect.center().x, canvas_rect.top() + 52.0),
-                egui::vec2(520.0, 56.0),
+                egui::pos2(
+                    canvas_rect.center().x,
+                    canvas_rect.top() + STATUS_OVERLAY_TOP_OFFSET,
+                ),
+                egui::vec2(STATUS_OVERLAY_WIDTH, STATUS_OVERLAY_HEIGHT),
             );
 
             ui.painter().rect_filled(
@@ -211,104 +209,136 @@ impl AlidrawApp {
     }
 
     fn show_close_confirmation(&mut self, ui: &mut egui::Ui) {
-        if !self.pending_close_confirmation {
+        if self.pending_dialog != PendingDialog::ConfirmClose {
             return;
         }
 
-        egui::Window::new("Leave AliDraw?")
-            .collapsible(false)
-            .resizable(false)
-            .fixed_size(egui::vec2(500.0, 220.0))
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ui.ctx(), |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(12.0);
-                    ui.label(
-                        egui::RichText::new("Quit AliDraw?")
-                            .size(32.0)
-                            .color(Color32::from_rgb(60, 60, 90)),
-                    );
-                    ui.add_space(14.0);
-                    ui.label(
-                        egui::RichText::new("Your drawing will be discarded")
-                            .size(22.0)
-                            .color(Color32::from_rgb(92, 92, 110)),
-                    );
-                    ui.add_space(18.0);
+        let response = show_confirm_dialog(
+            ui,
+            &ConfirmDialogConfig {
+                window_title: "Leave AliDraw?",
+                heading: "Quit AliDraw?",
+                subtitle: "Your drawing will be discarded",
+                cancel_label: "Stay",
+                cancel_fill: Color32::from_rgb(188, 230, 255),
+                confirm_label: "Quit",
+                confirm_fill: Color32::from_rgb(255, 203, 203),
+            },
+        );
 
-                    ui.horizontal(|ui| {
-                        let stay = egui::Button::new(egui::RichText::new("Stay").size(24.0))
-                            .min_size(egui::vec2(170.0, 62.0))
-                            .fill(Color32::from_rgb(188, 230, 255));
-                        if ui.add(stay).clicked() {
-                            self.allow_native_close = false;
-                            self.pending_close_confirmation = false;
-                        }
-
-                        ui.add_space(20.0);
-
-                        let leave = egui::Button::new(egui::RichText::new("Quit").size(24.0))
-                            .min_size(egui::vec2(170.0, 62.0))
-                            .fill(Color32::from_rgb(255, 203, 203));
-                        if ui.add(leave).clicked() {
-                            self.finish_current_stroke();
-                            self.allow_native_close = true;
-                            self.pending_close_confirmation = false;
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
-                });
-            });
+        if response.cancel_clicked {
+            self.allow_native_close = false;
+            self.pending_dialog = PendingDialog::None;
+        }
+        if response.confirm_clicked {
+            self.finish_current_stroke();
+            self.allow_native_close = true;
+            self.pending_dialog = PendingDialog::None;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     fn show_new_drawing_confirmation(&mut self, ui: &mut egui::Ui) {
-        if !self.pending_new_drawing_confirmation {
+        if self.pending_dialog != PendingDialog::ConfirmNewDrawing {
             return;
         }
 
-        egui::Window::new("Start new drawing?")
-            .collapsible(false)
-            .resizable(false)
-            .fixed_size(egui::vec2(540.0, 230.0))
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ui.ctx(), |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new("Start a new drawing?")
-                            .size(32.0)
-                            .color(Color32::from_rgb(60, 60, 90)),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new("This clears the current canvas")
-                            .size(22.0)
-                            .color(Color32::from_rgb(80, 80, 100)),
-                    );
+        let response = show_confirm_dialog(
+            ui,
+            &ConfirmDialogConfig {
+                window_title: "Start new drawing?",
+                heading: "Start a new drawing?",
+                subtitle: "This clears the current canvas",
+                cancel_label: "Keep",
+                cancel_fill: Color32::from_rgb(186, 230, 255),
+                confirm_label: "Start New",
+                confirm_fill: Color32::from_rgb(255, 236, 186),
+            },
+        );
+
+        if response.cancel_clicked {
+            self.pending_dialog = PendingDialog::None;
+        }
+        if response.confirm_clicked {
+            self.pending_dialog = PendingDialog::None;
+            self.clear_drawing();
+        }
+    }
+}
+
+/// Buttons clicked on a confirmation dialog.
+struct ConfirmResponse {
+    cancel_clicked: bool,
+    confirm_clicked: bool,
+}
+
+/// Configuration for a confirmation dialog.
+struct ConfirmDialogConfig<'a> {
+    window_title: &'a str,
+    heading: &'a str,
+    subtitle: &'a str,
+    cancel_label: &'a str,
+    cancel_fill: Color32,
+    confirm_label: &'a str,
+    confirm_fill: Color32,
+}
+
+/// Shared helper for the two confirmation modals.
+fn show_confirm_dialog(ui: &mut egui::Ui, config: &ConfirmDialogConfig<'_>) -> ConfirmResponse {
+    let mut response = ConfirmResponse {
+        cancel_clicked: false,
+        confirm_clicked: false,
+    };
+
+    egui::Window::new(config.window_title)
+        .collapsible(false)
+        .resizable(false)
+        .fixed_size(egui::vec2(DIALOG_WIDTH, DIALOG_HEIGHT))
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new(config.heading)
+                        .size(DIALOG_HEADING_SIZE)
+                        .color(Color32::from_rgb(60, 60, 90)),
+                );
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new(config.subtitle)
+                        .size(DIALOG_SUBTITLE_SIZE)
+                        .color(Color32::from_rgb(86, 86, 105)),
+                );
+                ui.add_space(18.0);
+
+                ui.horizontal(|ui| {
+                    let cancel = egui::Button::new(
+                        egui::RichText::new(config.cancel_label).size(DIALOG_BUTTON_TEXT_SIZE),
+                    )
+                    .min_size(egui::vec2(DIALOG_CANCEL_BUTTON_WIDTH, DIALOG_BUTTON_HEIGHT))
+                    .fill(config.cancel_fill);
+                    if ui.add(cancel).clicked() {
+                        response.cancel_clicked = true;
+                    }
+
                     ui.add_space(20.0);
 
-                    ui.horizontal(|ui| {
-                        let keep_button = egui::Button::new(egui::RichText::new("Keep").size(24.0))
-                            .min_size(egui::vec2(170.0, 62.0))
-                            .fill(Color32::from_rgb(186, 230, 255));
-                        if ui.add(keep_button).clicked() {
-                            self.pending_new_drawing_confirmation = false;
-                        }
-
-                        ui.add_space(20.0);
-
-                        let start_button =
-                            egui::Button::new(egui::RichText::new("Start New").size(24.0))
-                                .min_size(egui::vec2(190.0, 62.0))
-                                .fill(Color32::from_rgb(255, 236, 186));
-                        if ui.add(start_button).clicked() {
-                            self.pending_new_drawing_confirmation = false;
-                            self.clear_drawing();
-                        }
-                    });
+                    let confirm = egui::Button::new(
+                        egui::RichText::new(config.confirm_label).size(DIALOG_BUTTON_TEXT_SIZE),
+                    )
+                    .min_size(egui::vec2(
+                        DIALOG_CONFIRM_BUTTON_WIDTH,
+                        DIALOG_BUTTON_HEIGHT,
+                    ))
+                    .fill(config.confirm_fill);
+                    if ui.add(confirm).clicked() {
+                        response.confirm_clicked = true;
+                    }
                 });
             });
-    }
+        });
+
+    response
 }
 
 impl eframe::App for AlidrawApp {
@@ -316,8 +346,7 @@ impl eframe::App for AlidrawApp {
         if ui.ctx().input(|input| input.viewport().close_requested()) && !self.allow_native_close {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.allow_native_close = false;
-            self.pending_close_confirmation = true;
+            self.pending_dialog = PendingDialog::ConfirmClose;
         }
 
         let full_rect = ui.available_rect_before_wrap();
@@ -343,7 +372,7 @@ impl eframe::App for AlidrawApp {
                         &mut self.active_style,
                         &mut self.active_color_index,
                         &mut self.brush_size_index,
-                        self.history.can_undo(&self.strokes),
+                        self.history.can_undo(),
                         self.history.can_redo(),
                     )
                 },
@@ -359,8 +388,7 @@ impl eframe::App for AlidrawApp {
 
         self.prune_status();
 
-        let interaction_blocked =
-            self.pending_new_drawing_confirmation || self.pending_close_confirmation;
+        let interaction_blocked = self.pending_dialog != PendingDialog::None;
         ui.scope_builder(
             UiBuilder::new()
                 .id_salt("canvas-region")
@@ -400,11 +428,11 @@ impl eframe::App for AlidrawApp {
             self.save_as(canvas_rect);
         }
         if toolbar_actions.new_drawing {
-            self.pending_new_drawing_confirmation = true;
+            self.pending_dialog = PendingDialog::ConfirmNewDrawing;
         }
         if toolbar_actions.quit {
             self.allow_native_close = false;
-            self.pending_close_confirmation = true;
+            self.pending_dialog = PendingDialog::ConfirmClose;
         }
 
         self.show_close_confirmation(ui);

@@ -1,11 +1,39 @@
 use eframe::egui::Color32;
 
-use crate::brush::BrushStyle;
+use crate::brush::{BrushStyle, Tool};
 
 pub(crate) const SWATCH_SIZE: f32 = 48.0;
 pub(crate) const DEFAULT_COLOR_INDEX: usize = 20;
 pub(crate) const DEFAULT_BRUSH_SIZE_INDEX: usize = 9;
 pub(crate) const DEFAULT_BRUSH_STYLE_INDEX: usize = 0;
+
+/// Resolve the active drawing color, accounting for eraser override.
+pub(crate) fn active_color(tool: Tool, color_index: usize) -> Color32 {
+    if tool.is_eraser() {
+        Color32::WHITE
+    } else {
+        COLORS
+            .get(color_index)
+            .copied()
+            .unwrap_or(COLORS[DEFAULT_COLOR_INDEX])
+    }
+}
+
+/// Resolve the active brush width from an index.
+pub(crate) fn active_width(size_index: usize) -> f32 {
+    BRUSH_SIZES
+        .get(size_index)
+        .copied()
+        .unwrap_or(BRUSH_SIZES[DEFAULT_BRUSH_SIZE_INDEX])
+}
+
+/// Resolve the active brush style from an index.
+pub(crate) fn active_style(style_index: usize) -> BrushStyle {
+    BRUSH_STYLES
+        .get(style_index)
+        .copied()
+        .unwrap_or(BRUSH_STYLES[DEFAULT_BRUSH_STYLE_INDEX])
+}
 
 pub(crate) const BRUSH_SIZES: [f32; 20] = [
     2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0,
@@ -43,3 +71,7 @@ pub(crate) const COLORS: [Color32; 24] = [
     Color32::from_rgb(0xCF, 0xCF, 0xD4),
     Color32::from_rgb(0xFF, 0xFF, 0xFF),
 ];
+
+const _: () = assert!(DEFAULT_COLOR_INDEX < COLORS.len());
+const _: () = assert!(DEFAULT_BRUSH_SIZE_INDEX < BRUSH_SIZES.len());
+const _: () = assert!(DEFAULT_BRUSH_STYLE_INDEX < BRUSH_STYLES.len());

@@ -4,8 +4,13 @@ use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 use crate::brush::{BrushSpec, BrushStyle, StrokeKind};
 use crate::canvas::StrokeData;
 
+/// Safely convert an `f32` dimension to `u32`, clamping to valid range.
+pub(crate) fn safe_dimension(value: f32) -> u32 {
+    value.round().clamp(1.0, u32::MAX as f32) as u32
+}
+
 #[derive(Default)]
-pub struct CanvasRaster {
+pub(crate) struct CanvasRaster {
     committed_pixmap: Option<Pixmap>,
     frame_pixmap: Option<Pixmap>,
     texture: Option<TextureHandle>,
@@ -15,15 +20,15 @@ pub struct CanvasRaster {
 }
 
 impl CanvasRaster {
-    pub fn render(
+    pub(crate) fn render(
         &mut self,
         ui: &mut egui::Ui,
         rect: Rect,
         committed_strokes: &[StrokeData],
         current_stroke: Option<&StrokeData>,
     ) {
-        let width = rect.width().round().max(1.0) as u32;
-        let height = rect.height().round().max(1.0) as u32;
+        let width = safe_dimension(rect.width());
+        let height = safe_dimension(rect.height());
 
         if self.width != width
             || self.height != height
@@ -34,6 +39,9 @@ impl CanvasRaster {
             self.height = height;
             self.committed_pixmap = Pixmap::new(width, height);
             self.frame_pixmap = Pixmap::new(width, height);
+            if self.committed_pixmap.is_none() || self.frame_pixmap.is_none() {
+                eprintln!("Failed to allocate canvas pixmap ({width}x{height})");
+            }
             self.texture = None;
             self.dirty = true;
         }
@@ -55,7 +63,7 @@ impl CanvasRaster {
             }
 
             if let Some(stroke) = current_stroke {
-                stroke.apply_tiny_skia(frame_pixmap, rect.left_top());
+                rasterize_stroke(stroke, frame_pixmap, rect.left_top());
             }
 
             let size = [width as usize, height as usize];
@@ -90,15 +98,15 @@ impl CanvasRaster {
         committed.fill(Color::WHITE);
         committed_strokes
             .iter()
-            .for_each(|stroke| stroke.apply_tiny_skia(committed, origin));
+            .for_each(|stroke| rasterize_stroke(stroke, committed, origin));
         self.dirty = false;
     }
 
-    pub fn mark_dirty(&mut self) {
+    pub(crate) fn mark_dirty(&mut self) {
         self.dirty = true;
     }
 
-    pub fn rasterize_rgba(
+    pub(crate) fn rasterize_rgba(
         width: u32,
         height: u32,
         canvas_origin: egui::Pos2,
@@ -110,81 +118,83 @@ impl CanvasRaster {
 
         committed_strokes
             .iter()
-            .for_each(|stroke| stroke.apply_tiny_skia(&mut pixmap, canvas_origin));
+            .for_each(|stroke| rasterize_stroke(stroke, &mut pixmap, canvas_origin));
 
         if let Some(stroke) = current_stroke {
-            stroke.apply_tiny_skia(&mut pixmap, canvas_origin);
+            rasterize_stroke(stroke, &mut pixmap, canvas_origin);
         }
 
         Some(unpremultiply_rgba(pixmap.data()))
     }
 }
 
-impl StrokeData {
-    fn apply_tiny_skia(&self, pixmap: &mut Pixmap, canvas_origin: egui::Pos2) {
-        if self.point_count() == 0 {
-            return;
-        }
-
-        let spec = self.brush_spec();
-        let points: Vec<egui::Pos2> = self.iter_points().collect();
-
-        if points.len() == 1 {
-            self.paint_dot(pixmap, canvas_origin, spec);
-            return;
-        }
-
-        let mut path_builder = PathBuilder::new();
-        let first = points[0] - canvas_origin.to_vec2();
-        path_builder.move_to(first.x, first.y);
-        points.iter().skip(1).for_each(|point| {
-            let translated = *point - canvas_origin.to_vec2();
-            path_builder.line_to(translated.x, translated.y);
-        });
-
-        let Some(path) = path_builder.finish() else {
-            return;
-        };
-
-        let mut paint = Paint::default();
-        let effective = spec.effective_color();
-        let rgba = color_for_style(spec.style, spec.kind, effective);
-        paint.set_color_rgba8(rgba.0, rgba.1, rgba.2, rgba.3);
-        paint.anti_alias = true;
-
-        let stroke = Stroke {
-            width: width_for_style(spec.style, spec.width),
-            ..Stroke::default()
-        };
-
-        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+/// Rasterize a single stroke onto the given pixmap.
+fn rasterize_stroke(stroke: &StrokeData, pixmap: &mut Pixmap, canvas_origin: egui::Pos2) {
+    if stroke.point_count() == 0 {
+        return;
     }
 
-    fn paint_dot(&self, pixmap: &mut Pixmap, canvas_origin: egui::Pos2, spec: BrushSpec) {
-        let Some(point) = self.first_point() else {
-            return;
-        };
+    let spec = stroke.brush_spec();
 
-        let point = point - canvas_origin.to_vec2();
-        let radius = width_for_style(spec.style, spec.width) * 0.5;
-        let Some(path) = PathBuilder::from_circle(point.x, point.y, radius) else {
-            return;
-        };
-
-        let mut paint = Paint::default();
-        let effective = spec.effective_color();
-        let rgba = color_for_style(spec.style, spec.kind, effective);
-        paint.set_color_rgba8(rgba.0, rgba.1, rgba.2, rgba.3);
-        paint.anti_alias = true;
-
-        pixmap.fill_path(
-            &path,
-            &paint,
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
+    if stroke.point_count() == 1 {
+        paint_dot(stroke, pixmap, canvas_origin, spec);
+        return;
     }
+
+    let mut path_builder = PathBuilder::new();
+    let offset = canvas_origin.to_vec2();
+    let mut iter = stroke.iter_points();
+
+    if let Some(first) = iter.next() {
+        let p = first - offset;
+        path_builder.move_to(p.x, p.y);
+    }
+    for point in iter {
+        let p = point - offset;
+        path_builder.line_to(p.x, p.y);
+    }
+
+    let Some(path) = path_builder.finish() else {
+        return;
+    };
+
+    let mut paint = Paint::default();
+    let rgba = color_for_style(spec.style, spec.kind, spec.stored_color());
+    paint.set_color_rgba8(rgba.0, rgba.1, rgba.2, rgba.3);
+    paint.anti_alias = true;
+
+    let sk_stroke = Stroke {
+        width: width_for_style(spec.style, spec.width),
+        ..Stroke::default()
+    };
+
+    pixmap.stroke_path(&path, &paint, &sk_stroke, Transform::identity(), None);
+}
+
+/// Paint a single-point stroke as a filled dot.
+fn paint_dot(stroke: &StrokeData, pixmap: &mut Pixmap, canvas_origin: egui::Pos2, spec: BrushSpec) {
+    let Some(point) = stroke.first_point() else {
+        return;
+    };
+
+    let point = point - canvas_origin.to_vec2();
+    let radius = width_for_style(spec.style, spec.width) * 0.5;
+    let Some(path) = PathBuilder::from_circle(point.x, point.y, radius) else {
+        return;
+    };
+
+    let mut paint = Paint::default();
+    let rgba = color_for_style(spec.style, spec.kind, spec.stored_color());
+    paint.set_color_rgba8(rgba.0, rgba.1, rgba.2, rgba.3);
+    paint.anti_alias = true;
+
+    pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
 }
 
 fn color_for_style(style: BrushStyle, kind: StrokeKind, color: egui::Color32) -> (u8, u8, u8, u8) {
@@ -200,30 +210,25 @@ fn color_for_style(style: BrushStyle, kind: StrokeKind, color: egui::Color32) ->
 }
 
 fn width_for_style(style: BrushStyle, width: f32) -> f32 {
-    match style {
-        BrushStyle::Pencil => width,
-        BrushStyle::Marker => width * 1.3,
-        BrushStyle::Watercolor => width * 1.8,
-    }
+    width * style.width_multiplier()
 }
 
 fn unpremultiply_rgba(bytes: &[u8]) -> Vec<u8> {
-    bytes
-        .chunks_exact(4)
-        .flat_map(|pixel| {
-            let r = pixel[0] as u32;
-            let g = pixel[1] as u32;
-            let b = pixel[2] as u32;
-            let a = pixel[3] as u32;
+    let mut out = Vec::with_capacity(bytes.len());
+    for pixel in bytes.chunks_exact(4) {
+        let r = pixel[0] as u32;
+        let g = pixel[1] as u32;
+        let b = pixel[2] as u32;
+        let a = pixel[3] as u32;
 
-            if a == 0 {
-                [0_u8, 0, 0, 0]
-            } else if a == 255 {
-                [pixel[0], pixel[1], pixel[2], pixel[3]]
-            } else {
-                let unpremul = |component: u32| ((component * 255 + a / 2) / a).min(255) as u8;
-                [unpremul(r), unpremul(g), unpremul(b), pixel[3]]
-            }
-        })
-        .collect()
+        if a == 0 {
+            out.extend_from_slice(&[0, 0, 0, 0]);
+        } else if a == 255 {
+            out.extend_from_slice(pixel);
+        } else {
+            let unpremul = |component: u32| ((component * 255 + a / 2) / a).min(255) as u8;
+            out.extend_from_slice(&[unpremul(r), unpremul(g), unpremul(b), pixel[3]]);
+        }
+    }
+    out
 }

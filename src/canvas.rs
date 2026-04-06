@@ -3,13 +3,13 @@ use eframe::egui::{Color32, Pos2};
 use crate::brush::{BrushSpec, BrushStyle, StrokeKind, Tool};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StrokeData {
+pub(crate) struct StrokeData {
     points: Vec<[f32; 2]>,
     brush: BrushSpec,
 }
 
 impl StrokeData {
-    pub fn new(color: Color32, width: f32, tool: Tool, style: BrushStyle) -> Self {
+    pub(crate) fn new(color: Color32, width: f32, tool: Tool, style: BrushStyle) -> Self {
         let kind = if tool.is_eraser() {
             StrokeKind::Erase
         } else {
@@ -33,7 +33,7 @@ impl StrokeData {
         }
     }
 
-    pub fn push_point(&mut self, point: Pos2) {
+    pub(crate) fn push_point(&mut self, point: Pos2) {
         if self
             .points
             .last()
@@ -44,7 +44,7 @@ impl StrokeData {
         self.points.push([point.x, point.y]);
     }
 
-    pub fn point_count(&self) -> usize {
+    pub(crate) fn point_count(&self) -> usize {
         self.points.len()
     }
 
