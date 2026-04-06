@@ -6,6 +6,7 @@ mod error;
 mod export;
 mod history;
 mod icons;
+mod import;
 mod palette;
 mod toolbar;
 

@@ -28,6 +28,7 @@ pub(crate) struct ToolbarActions {
     pub(crate) undo: bool,
     pub(crate) redo: bool,
     pub(crate) save_as: bool,
+    pub(crate) open: bool,
     pub(crate) new_drawing: bool,
     pub(crate) quit: bool,
 }
@@ -379,6 +380,15 @@ fn show_footer_actions(
                     true,
                 ) {
                     actions.save_as = true;
+                }
+                if action_icon_button(
+                    ui,
+                    ToolbarIcon::Open,
+                    Color32::from_rgb(214, 232, 255),
+                    ICON_COLOR,
+                    true,
+                ) {
+                    actions.open = true;
                 }
                 if action_icon_button(
                     ui,

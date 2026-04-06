@@ -1,5 +1,5 @@
 use eframe::egui::{self, Rect, TextureHandle, TextureOptions};
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform};
 
 use crate::brush::{BrushSpec, BrushStyle, StrokeKind};
 use crate::canvas::StrokeData;
@@ -17,6 +17,8 @@ pub(crate) struct CanvasRaster {
     width: u32,
     height: u32,
     dirty: bool,
+    /// Loaded image displayed centered at original size behind all strokes.
+    background: Option<Pixmap>,
 }
 
 impl CanvasRaster {
@@ -96,6 +98,9 @@ impl CanvasRaster {
         };
 
         committed.fill(Color::WHITE);
+        if let Some(bg) = self.background.as_ref() {
+            draw_background_centered(committed, bg);
+        }
         committed_strokes
             .iter()
             .for_each(|stroke| rasterize_stroke(stroke, committed, origin));
@@ -106,15 +111,34 @@ impl CanvasRaster {
         self.dirty = true;
     }
 
+    pub(crate) fn set_background(&mut self, bg: Pixmap) {
+        self.background = Some(bg);
+        self.dirty = true;
+    }
+
+    pub(crate) fn clear_background(&mut self) {
+        self.background = None;
+        self.dirty = true;
+    }
+
+    pub(crate) fn background(&self) -> Option<&Pixmap> {
+        self.background.as_ref()
+    }
+
     pub(crate) fn rasterize_rgba(
         width: u32,
         height: u32,
         canvas_origin: egui::Pos2,
         committed_strokes: &[StrokeData],
         current_stroke: Option<&StrokeData>,
+        background: Option<&Pixmap>,
     ) -> Option<Vec<u8>> {
         let mut pixmap = Pixmap::new(width, height)?;
         pixmap.fill(Color::WHITE);
+
+        if let Some(bg) = background {
+            draw_background_centered(&mut pixmap, bg);
+        }
 
         committed_strokes
             .iter()
@@ -126,6 +150,21 @@ impl CanvasRaster {
 
         Some(unpremultiply_rgba(pixmap.data()))
     }
+}
+
+/// Draw `bg` centered at original size onto `target`.
+/// If the background is larger than the target, edges are clipped automatically.
+fn draw_background_centered(target: &mut Pixmap, bg: &Pixmap) {
+    let tx = (target.width() as i32 - bg.width() as i32) / 2;
+    let ty = (target.height() as i32 - bg.height() as i32) / 2;
+    target.draw_pixmap(
+        tx,
+        ty,
+        bg.as_ref(),
+        &PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
 }
 
 /// Rasterize a single stroke onto the given pixmap.

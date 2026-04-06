@@ -4,7 +4,7 @@ use crate::brush::{BrushStyle, Tool};
 
 pub(crate) const SWATCH_SIZE: f32 = 48.0;
 pub(crate) const DEFAULT_COLOR_INDEX: usize = 20;
-pub(crate) const DEFAULT_BRUSH_SIZE_INDEX: usize = 9;
+pub(crate) const DEFAULT_BRUSH_SIZE_INDEX: usize = 5;
 pub(crate) const DEFAULT_BRUSH_STYLE_INDEX: usize = 0;
 
 /// Resolve the active drawing color, accounting for eraser override.

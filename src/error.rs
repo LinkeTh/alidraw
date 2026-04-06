@@ -8,11 +8,25 @@ pub(crate) enum AppError {
         #[source]
         source: image::ImageError,
     },
+
+    #[error("failed to open image from {}: {source}", path.display())]
+    ImportImage {
+        path: PathBuf,
+        #[source]
+        source: image::ImageError,
+    },
 }
 
 impl AppError {
     pub(crate) fn export_image(path: &std::path::Path, source: image::ImageError) -> Self {
         Self::ExportImage {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+
+    pub(crate) fn import_image(path: &std::path::Path, source: image::ImageError) -> Self {
+        Self::ImportImage {
             path: path.to_path_buf(),
             source,
         }

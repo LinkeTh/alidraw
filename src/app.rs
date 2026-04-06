@@ -1,4 +1,5 @@
 use eframe::egui::{self, Color32, Sense, UiBuilder};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::brush::{BrushStyle, Tool};
@@ -6,6 +7,7 @@ use crate::canvas::StrokeData;
 use crate::canvas_raster::{self, CanvasRaster};
 use crate::export;
 use crate::history::History;
+use crate::import;
 use crate::palette::{
     self, DEFAULT_BRUSH_SIZE_INDEX, DEFAULT_BRUSH_STYLE_INDEX, DEFAULT_COLOR_INDEX,
 };
@@ -29,12 +31,13 @@ const DIALOG_CANCEL_BUTTON_WIDTH: f32 = 170.0;
 const DIALOG_CONFIRM_BUTTON_WIDTH: f32 = 190.0;
 const DIALOG_BUTTON_HEIGHT: f32 = 62.0;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 enum PendingDialog {
     #[default]
     None,
     ConfirmClose,
     ConfirmNewDrawing,
+    ConfirmOpen(PathBuf),
 }
 
 pub(crate) struct AlidrawApp {
@@ -130,6 +133,7 @@ impl AlidrawApp {
             canvas_rect.left_top(),
             &self.strokes,
             None,
+            self.raster.background(),
         ) else {
             self.set_status("Could not prepare image");
             return;
@@ -197,15 +201,50 @@ impl AlidrawApp {
 
     fn clear_drawing(&mut self) {
         self.finish_current_stroke();
-        if self.strokes.is_empty() {
+        if self.strokes.is_empty() && self.raster.background().is_none() {
             return;
         }
 
         self.history.set_baseline(&[]);
         self.strokes.clear();
         self.current_stroke = None;
+        self.raster.clear_background();
         self.raster.mark_dirty();
         self.set_status("Started a fresh drawing");
+    }
+
+    fn handle_open(&mut self) {
+        let Some(path) = import::choose_import_path() else {
+            return;
+        };
+
+        if !self.strokes.is_empty() || self.raster.background().is_some() {
+            self.pending_dialog = PendingDialog::ConfirmOpen(path);
+        } else {
+            self.load_and_set_background(path);
+        }
+    }
+
+    fn load_and_set_background(&mut self, path: PathBuf) {
+        match import::load_image(&path) {
+            Ok(pixmap) => {
+                self.strokes.clear();
+                self.current_stroke = None;
+                self.history.set_baseline(&[]);
+                self.raster.set_background(pixmap);
+                self.raster.mark_dirty();
+
+                let label = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "image".to_owned());
+                self.set_status(&format!("Opened {label}"));
+            }
+            Err(error) => {
+                eprintln!("Image import failed: {error}");
+                self.set_status("Could not open image");
+            }
+        }
     }
 
     fn show_close_confirmation(&mut self, ui: &mut egui::Ui) {
@@ -262,6 +301,34 @@ impl AlidrawApp {
         if response.confirm_clicked {
             self.pending_dialog = PendingDialog::None;
             self.clear_drawing();
+        }
+    }
+
+    fn show_open_confirmation(&mut self, ui: &mut egui::Ui) {
+        let path = match &self.pending_dialog {
+            PendingDialog::ConfirmOpen(p) => p.clone(),
+            _ => return,
+        };
+
+        let response = show_confirm_dialog(
+            ui,
+            &ConfirmDialogConfig {
+                window_title: "Open image?",
+                heading: "Open a new image?",
+                subtitle: "This replaces the current drawing",
+                cancel_label: "Cancel",
+                cancel_fill: Color32::from_rgb(186, 230, 255),
+                confirm_label: "Open",
+                confirm_fill: Color32::from_rgb(214, 232, 255),
+            },
+        );
+
+        if response.cancel_clicked {
+            self.pending_dialog = PendingDialog::None;
+        }
+        if response.confirm_clicked {
+            self.pending_dialog = PendingDialog::None;
+            self.load_and_set_background(path);
         }
     }
 }
@@ -427,6 +494,9 @@ impl eframe::App for AlidrawApp {
         if toolbar_actions.save_as {
             self.save_as(canvas_rect);
         }
+        if toolbar_actions.open {
+            self.handle_open();
+        }
         if toolbar_actions.new_drawing {
             self.pending_dialog = PendingDialog::ConfirmNewDrawing;
         }
@@ -437,6 +507,7 @@ impl eframe::App for AlidrawApp {
 
         self.show_close_confirmation(ui);
         self.show_new_drawing_confirmation(ui);
+        self.show_open_confirmation(ui);
 
         ui.expand_to_include_rect(full_rect);
     }

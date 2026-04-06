@@ -13,6 +13,7 @@ pub(crate) enum ToolbarIcon {
     Undo,
     Redo,
     Save,
+    Open,
     New,
     Quit,
 }
@@ -48,6 +49,7 @@ fn lucide_icon(icon: ToolbarIcon) -> Icon {
         ToolbarIcon::Undo => Icon::Undo2,
         ToolbarIcon::Redo => Icon::Redo2,
         ToolbarIcon::Save => Icon::Save,
+        ToolbarIcon::Open => Icon::FolderOpen,
         ToolbarIcon::New => Icon::FilePlus,
         ToolbarIcon::Quit => Icon::Power,
     }
