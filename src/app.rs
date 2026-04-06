@@ -1,5 +1,6 @@
 use eframe::egui::{self, Color32, Sense, UiBuilder};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::brush::{BrushStyle, Tool};
@@ -23,7 +24,7 @@ const STATUS_OVERLAY_HEIGHT: f32 = 56.0;
 const STATUS_OVERLAY_TOP_OFFSET: f32 = 52.0;
 
 pub(crate) struct AlidrawApp {
-    strokes: Vec<StrokeData>,
+    strokes: Vec<Arc<StrokeData>>,
     current_stroke: Option<StrokeData>,
     active_tool: Tool,
     active_style: BrushStyle,
@@ -80,7 +81,7 @@ impl AlidrawApp {
             && stroke.point_count() > 0
         {
             self.history.snapshot(&self.strokes);
-            self.strokes.push(stroke);
+            self.strokes.push(Arc::new(stroke));
             self.raster.mark_dirty();
         }
     }

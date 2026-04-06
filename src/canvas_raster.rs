@@ -1,4 +1,5 @@
 use eframe::egui::{self, Rect, TextureHandle, TextureOptions};
+use std::sync::Arc;
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform};
 
 use crate::brush::{BrushSpec, BrushStyle, StrokeKind};
@@ -26,7 +27,7 @@ impl CanvasRaster {
         &mut self,
         ui: &mut egui::Ui,
         rect: Rect,
-        committed_strokes: &[StrokeData],
+        committed_strokes: &[Arc<StrokeData>],
         current_stroke: Option<&StrokeData>,
     ) {
         let width = safe_dimension(rect.width());
@@ -92,7 +93,7 @@ impl CanvasRaster {
         }
     }
 
-    fn redraw_committed(&mut self, committed_strokes: &[StrokeData], origin: egui::Pos2) {
+    fn redraw_committed(&mut self, committed_strokes: &[Arc<StrokeData>], origin: egui::Pos2) {
         let Some(committed) = self.committed_pixmap.as_mut() else {
             return;
         };
@@ -129,7 +130,7 @@ impl CanvasRaster {
         width: u32,
         height: u32,
         canvas_origin: egui::Pos2,
-        committed_strokes: &[StrokeData],
+        committed_strokes: &[Arc<StrokeData>],
         current_stroke: Option<&StrokeData>,
         background: Option<&Pixmap>,
     ) -> Option<Vec<u8>> {
